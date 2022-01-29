@@ -232,6 +232,8 @@ endif()
 
 enable_testing()
 
+add_subdirectory(third_party/ordered-map)
+
 # NOTE: assumes that submodule has been initialized
 set(CLASP_BUILD_APP ${CLINGO_BUILD_APPS} CACHE BOOL "")
 if (CLINGO_USE_LIB)

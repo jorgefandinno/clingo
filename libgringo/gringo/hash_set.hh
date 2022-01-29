@@ -30,8 +30,12 @@
 #include <algorithm>
 #include <stdexcept>
 #include <array>
+
+#include <tsl/ordered_set.h>
+
 #include <gringo/primes.hh>
 #include <gringo/utility.hh>
+
 
 // This shoud really be benchmarked on a large set of problems.
 // I would expect double hashing to be more robust but slower than linear probing.

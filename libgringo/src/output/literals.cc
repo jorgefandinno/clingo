@@ -470,11 +470,13 @@ AssignmentAggregateData::Values AssignmentAggregateData::values() const {
             return values;
         }
         default: {
-            UniqueVec<Symbol> values;
+            tsl::ordered_set<Symbol> values;
             auto it = values_.begin();
-            values.push(*it++);
+            values.insert(*it++);
             for (auto ie = values_.end(); it != ie; ++it) {
-                for (Id_t jt = 0, je = values.size(); jt != je; ++jt) { values.push(Symbol::createNum(values[jt].num() + it->num())); }
+                for (Id_t jt = 0, je = values.size(); jt != je; ++jt) {
+                    values.insert(Symbol::createNum((values.begin() + jt)->num() + it->num()));
+                }
             }
             return {values.begin(), values.end()};
         }

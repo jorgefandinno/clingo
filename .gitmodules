@@ -2,3 +2,6 @@
 	path = clasp
 	url = https://github.com/potassco/clasp.git
 	branch = dev
+[submodule "third_party/ordered-map"]
+	path = third_party/ordered-map
+	url = ../../Tessil/ordered-map
