@@ -1,4 +1,5 @@
 #include <clingo/ground/instantiator.hh>
+#include <clingo/ground/statement.hh>
 
 #include <clingo/util/checked_math.hh>
 #include <clingo/util/print.hh>
@@ -125,6 +126,53 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
     auto ctx = EvalContext{log, store, out, ass_};
     it->match(ctx);
     CLINGO_REPORT(log, trace) << "  instantiate: " << *this;
+    if (auto rule = dynamic_cast<Stm*>(icb_)){
+        CLINGO_REPORT(log, trace) << "    icb_: " << *rule;
+        auto body_length = rule->body().size();
+        CLINGO_REPORT(log, trace) << "    body length: " << body_length;
+        auto body_vars = std::vector<VariableSet>();
+        auto previous_vars = std::vector<VariableSet>();
+        auto next_vars = std::vector<VariableSet>();
+        auto projected_vars = std::vector<VariableSet>();
+        for(auto &lit : rule->body()) {
+            CLINGO_REPORT(log, trace) << "    literal: " << *lit;
+            VariableSet vars = VariableSet();
+            lit->vars(vars, VarSelectMode::all);
+            body_vars.push_back(vars);
+            CLINGO_REPORT(log, trace) << "       variables: " << Util::p_range(vars, ", ", [](std::ostream &out, auto const &var) { out << var; });;
+        }
+        auto tmp_vars = VariableSet();
+        for(const auto &vars : body_vars) {
+            CLINGO_REPORT(log, trace) << "    body variables: " << Util::p_range(vars, ", ", [](std::ostream &out, auto const &var) { out << var; });;
+            tmp_vars.insert(vars.begin(), vars.end());
+            previous_vars.push_back(tmp_vars);
+        }
+        tmp_vars = VariableSet();
+        for(auto vars = body_vars.rbegin(); vars != body_vars.rend(); ++vars) {
+            next_vars.push_back(tmp_vars);
+            tmp_vars.insert(vars->begin(), vars->end());
+        }
+        reverse(next_vars.begin(), next_vars.end());
+        for(size_t i = 0; i < body_length; ++i) {
+            auto projected = VariableSet();
+            for(auto var : previous_vars[i]) {
+                if(next_vars[i].find(var) != next_vars[i].end()) {
+                    projected.insert(var);
+                }
+            }
+            projected_vars.push_back(projected);
+        }
+        for(const auto &vars : previous_vars) {
+            CLINGO_REPORT(log, trace) << "    previous variables: " << Util::p_range(vars, ", ", [](std::ostream &out, auto const &var) { out << var; });;
+        }
+        for(const auto &vars : next_vars) {
+            CLINGO_REPORT(log, trace) << "    next variables: " << Util::p_range(vars, ", ", [](std::ostream &out, auto const &var) { out << var; });;
+        }
+        for(const auto &vars : projected_vars) {
+            CLINGO_REPORT(log, trace) << "    projected variables: " << Util::p_range(vars, ", ", [](std::ostream &out, auto const &var) { out << var; });;
+        }
+    }
+
     do {
         if (stop != nullptr && stop->stop_requested()) {
             return GroundResult::interrupted;
@@ -140,6 +188,13 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
                 }
             }
             CLINGO_REPORT(log, trace) << "    advanced to " << std::distance(it, ie) - 1;
+            CLINGO_REPORT(log, trace) << "    context:";
+            for (auto const &atom : ctx.ass()) {
+                if (atom.has_value())
+                    CLINGO_REPORT(log, trace) << "        " << atom.value();
+                else
+                    CLINGO_REPORT(log, trace) << "        <undefined>";
+            }
         }
         if (it == ib) {
             CLINGO_REPORT(log, trace) << "    solution";
