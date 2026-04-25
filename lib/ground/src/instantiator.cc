@@ -137,7 +137,8 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
     auto ctx = EvalContext{log, store, out, ass_};
     it->match(ctx);
     CLINGO_REPORT(log, trace) << "  instantiate: " << *this;
-    if (auto rule = dynamic_cast<Stm*>(icb_)){
+    ////////////////// Jorge ->
+    if (auto rule = dynamic_cast<StmRule*>(icb_)){
         CLINGO_REPORT(log, trace) << "    icb_: " << *rule;
         auto body_length = rule->body().size();
         CLINGO_REPORT(log, trace) << "    body length: " << body_length;
@@ -179,6 +180,7 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
             CLINGO_REPORT(log, trace) << "    non-projecting variables: " << Util::p_range(vars, ", ", [](std::ostream &out, auto const &var) { out << var; });;
         }
     }
+    ///////////////////// <- Jorge
 
     do {
         if (stop != nullptr && stop->stop_requested()) {
