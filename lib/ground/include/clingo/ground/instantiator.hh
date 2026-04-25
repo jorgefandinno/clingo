@@ -193,6 +193,7 @@ class Instantiator {
         auto *node = icb.profile_node();
         return node != nullptr ? &node->add_child(std::make_unique<ProfileData>()).step_ : nullptr;
     }
+
     class BackjumpMatcher {
       public:
         BackjumpMatcher(UMatcher matcher, DependVec depend)
