@@ -29,3 +29,4 @@ __pycache__
 compile_commands.json
 wheelhouse
 /bug*
+!test.sh

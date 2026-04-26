@@ -18,8 +18,6 @@ namespace CppClingo::Ground {
 //! @{
 
 //! A set of variables.
-using VariableSet = Util::ordered_set<size_t>;
-//! A vector of variables.
 using VariableVec = VariableSet::values_container_type;
 
 //! Modes determining how to handle variables in terms.

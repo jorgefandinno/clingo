@@ -7,6 +7,7 @@
 #include <clingo/core/symbol.hh>
 
 #include <clingo/util/sync.hh>
+#include <clingo/util/ordered_set.hh>
 
 #include <memory>
 #include <utility>
@@ -16,6 +17,9 @@ namespace CppClingo::Ground {
 
 //! @addtogroup ground_instantiator
 //! @{
+
+//! A set of variables.
+using VariableSet = Util::ordered_set<size_t>;
 
 class Instantiator;
 
@@ -130,6 +134,8 @@ class InstanceCallback {
     //!
     //! The returned pointer might be null if profiling is not enabled.
     [[nodiscard]] auto profile_node() const -> ProfileNodeInternal * { return do_profile_node(); }
+    //! Returns true if the callback should be projected. remaining_vars and callbacks should be empty vectors that are filled with the variables to notproject and the callbacks to project, respectively, when this function returns true.
+    [[nodiscard]] auto project(std::vector<VariableSet> &remaining_vars, std::vector<InstanceCallback> &callbacks) -> bool { return do_project(remaining_vars, callbacks); }
 
   private:
     virtual void do_init(size_t gen) = 0;
@@ -139,6 +145,7 @@ class InstanceCallback {
     virtual void do_print_head(std::ostream &out) const = 0;
     [[nodiscard]] virtual auto do_is_important([[maybe_unused]] size_t index) const -> bool { return true; }
     [[nodiscard]] virtual auto do_profile_node() const -> ProfileNodeInternal * = 0;
+    [[nodiscard]] virtual auto do_project(std::vector<VariableSet> &remaining_vars, std::vector<InstanceCallback> &callbacks) -> bool { return false; }
 };
 
 //! An instantiator implementing the basic grounding algorithm.
@@ -193,6 +200,10 @@ class Instantiator {
         auto *node = icb.profile_node();
         return node != nullptr ? &node->add_child(std::make_unique<ProfileData>()).step_ : nullptr;
     }
+    [[nodiscard]] auto instantiate_with_projection(Logger &log, SymbolStore &store, OutputStm &out, Util::StopFlag *stop)
+        -> GroundResult;
+    [[nodiscard]] auto instantiate_without_projection(Logger &log, SymbolStore &store, OutputStm &out, Util::StopFlag *stop)
+        -> GroundResult;
     class BackjumpMatcher {
       public:
         BackjumpMatcher(UMatcher matcher, DependVec depend)

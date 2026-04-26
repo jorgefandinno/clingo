@@ -116,7 +116,7 @@ void Instantiator::print(std::ostream &out) const {
     });
 }
 
-auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, Util::StopFlag *stop) -> GroundResult {
+auto Instantiator::instantiate_without_projection(Logger &log, SymbolStore &store, OutputStm &out, Util::StopFlag *stop) -> GroundResult {
     auto timer = ProfileTimer{stats_ != nullptr ? &stats_->time_instantiate : nullptr};
     enqueued_ = false;
     auto ie = matchers_.rend();
@@ -159,6 +159,56 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
         CLINGO_REPORT(log, trace) << "    backjumped to " << std::distance(it, ie) - 1;
     } while (it != ie);
     return GroundResult::ok;
+}
+
+auto Instantiator::instantiate_with_projection(Logger &log, SymbolStore &store, OutputStm &out, Util::StopFlag *stop) -> GroundResult {
+    auto timer = ProfileTimer{stats_ != nullptr ? &stats_->time_instantiate : nullptr};
+    enqueued_ = false;
+    auto ie = matchers_.rend();
+    auto it = ie - 1;
+    auto ib = matchers_.rbegin();
+    auto ctx = EvalContext{log, store, out, ass_};
+    it->match(ctx);
+    CLINGO_REPORT(log, trace) << "  instantiate: " << *this;
+    do {
+        if (stop != nullptr && stop->stop_requested()) {
+            return GroundResult::interrupted;
+        }
+        CLINGO_REPORT(log, trace) << "    start at " << std::distance(it, ie) - 1;
+        if (it->next(ctx)) {
+            if (stats_ != nullptr) {
+                ++stats_->matches;
+            }
+            for (--it; it->first(ctx); --it) {
+                if (stats_ != nullptr) {
+                    ++stats_->matches;
+                }
+            }
+            CLINGO_REPORT(log, trace) << "    advanced to " << std::distance(it, ie) - 1;
+        }
+        if (it == ib) {
+            CLINGO_REPORT(log, trace) << "    solution";
+            if (stats_ != nullptr) {
+                ++stats_->instances;
+            }
+            if (!icb_->report(ctx)) {
+                return GroundResult::unsatisfiable;
+            }
+        }
+        CLINGO_REPORT(log, trace) << "    block: " << Util::p_range(it->depend());
+        for (auto idx : it->depend()) {
+            matchers_[idx].block();
+        }
+        for (++it; it != ie && it->backjumpable(); ++it) {
+        }
+        CLINGO_REPORT(log, trace) << "    backjumped to " << std::distance(it, ie) - 1;
+    } while (it != ie);
+    return GroundResult::ok;
+}
+
+
+auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, Util::StopFlag *stop) -> GroundResult {
+    return instantiate_without_projection(log, store, out, stop);
 }
 
 void Instantiator::propagate(SymbolStore &store, OutputStm &out, Queue &queue) {

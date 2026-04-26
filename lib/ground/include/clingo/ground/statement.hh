@@ -90,6 +90,10 @@ class StmRule : public Stm {
     }
 
   private:
+    StmRule(UTerm head, AtomBase *base, std::vector<size_t> indices, ULitVec body, RuleType type, ProfileNodeInternal *node)
+        : head_{std::move(head)}, node_{node}, base_{base}, indices_{std::move(indices)}, body_{std::move(body)}, type_{type} {
+        init_();
+    }
     void init_();
 
     // Stm interface
