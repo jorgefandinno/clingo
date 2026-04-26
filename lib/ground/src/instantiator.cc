@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include <clingo/ground/instantiator.hh>
 #include <clingo/ground/statement.hh>
 
@@ -140,8 +142,8 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
     ////////////////// Jorge ->
     if (auto rule = dynamic_cast<StmRule*>(icb_)){
         CLINGO_REPORT(log, trace) << "    icb_: " << *rule;
-        auto body_length = rule->body().size();
-        CLINGO_REPORT(log, trace) << "    body length: " << body_length;
+        auto body_size = rule->body().size();
+        CLINGO_REPORT(log, trace) << "    body length: " << body_size;
         auto body_vars = std::vector<VariableSet>();
         auto previous_vars = std::vector<VariableSet>();
         auto next_vars = std::vector<VariableSet>();
@@ -165,7 +167,7 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
             tmp_vars.insert(vars->begin(), vars->end());
         }
         reverse(next_vars.begin(), next_vars.end());
-        for (size_t i = 0; i < body_length; ++i) {
+        for (size_t i = 0; i < body_size; ++i) {
             auto projected = VariableSet();
             set_intersection(previous_vars[i], next_vars[i], projected);
             non_projecting_vars.push_back(projected);
@@ -178,6 +180,30 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
         }
         for (const auto &vars : non_projecting_vars) {
             CLINGO_REPORT(log, trace) << "    non-projecting variables: " << Util::p_range(vars, ", ", [](std::ostream &out, auto const &var) { out << var; });;
+        }
+        auto projected_rules = std::vector<std::unique_ptr<StmRule>>();
+        for (size_t i = 0, last=0; i < body_size; ++i) {
+            if (previous_vars[i].size() > non_projecting_vars[i].size()) {
+                auto projected_body = ULitVec();
+                for (auto lit = rule->body().begin()+last; lit != rule->body().begin()+i; ++lit) {
+                    ULit projected_lit = (*lit)->copy();
+                    CLINGO_REPORT(log, trace) << "    projecting literal: " << *projected_lit;
+                    projected_body.push_back(std::move(projected_lit));
+                }
+                CLINGO_REPORT(log, trace) << "    projected_body size: " << projected_body.size();
+                CLINGO_REPORT(log, trace) << "    projected_body: " << Util::p_range(projected_body, ", ", [](std::ostream &out, auto const &lit) { out << *lit; }) << ".";
+                projected_rules.push_back(std::make_unique<StmRule>(rule->head(), std::move(projected_body), rule->type(), icb_->profile_node()));
+                last = i;
+            }
+            else {
+                projected_rules.push_back(nullptr);
+            }
+        }
+        for (const auto &projected_rule : projected_rules) {
+            if (projected_rule != nullptr) {
+                std::cout << "Hello" << std::endl;
+                CLINGO_REPORT(log, trace) << "    projected rule: " << *projected_rule;
+            }
         }
     }
     ///////////////////// <- Jorge

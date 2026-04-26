@@ -288,8 +288,11 @@ void StmRule::do_print_head(std::ostream &out) const {
 }
 
 void StmRule::do_print(std::ostream &out) const {
+    std::cout << "    do_print" << std::endl;
     out << "max: ";
+    std::cout << "    print_head" << std::endl;
     print_head(out);
+    std::cout << "    print_body " << !indices_.empty() << std::endl;
     if (!indices_.empty()) {
         out << "[" << Util::p_range(indices_, ",") << "]";
     }

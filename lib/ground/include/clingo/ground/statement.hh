@@ -1,5 +1,7 @@
 #pragma once
 
+#include <iostream>
+
 #include <clingo/ground/literal.hh>
 
 #include <clingo/ground/instantiator.hh>
@@ -88,6 +90,15 @@ class StmRule : public Stm {
           indices_{head ? std::move(std::get<2>(*head)) : std::vector<size_t>{}}, body_{std::move(body)}, type_{type} {
         init_();
     }
+    auto head() const -> AtomSimple {
+        // if (head_) {
+        //   UTerm head = head_->copy();
+        //   return std::make_tuple(head, *base_, std::vector<size_t>(indices_));
+        // }
+        return std::nullopt;
+    }
+
+    auto type() const -> RuleType { return type_; }
 
   private:
     void init_();
