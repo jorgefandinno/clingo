@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <clingo/ground/profile.hh>
 
 #include <clingo/core/logger.hh>
@@ -98,6 +100,9 @@ class Matcher {
     void print(std::ostream &out) const { do_print(out); }
     //! Get the type of the matcher.
     [[nodiscard]] auto type() const -> MatcherType { return do_type(); }
+    //! Get the variables in the matcher.
+    [[nodiscard]] auto vars() const -> std::optional<VariableSet> { return do_vars(); }
+
 
   private:
     virtual void do_init(InstantiationContext const &ctx, size_t gen) = 0;
@@ -105,6 +110,7 @@ class Matcher {
     [[nodiscard]] virtual auto do_next(EvalContext const &ctx) -> bool = 0;
     virtual void do_print(std::ostream &out) const = 0;
     [[nodiscard]] virtual auto do_type() const -> MatcherType { return MatcherType::all_atoms; }
+    [[nodiscard]] virtual auto do_vars() const -> std::optional<VariableSet> { return std::nullopt; }
 };
 //! A unique pointer to a matcher.
 using UMatcher = std::unique_ptr<Matcher>;
@@ -135,7 +141,7 @@ class InstanceCallback {
     //! The returned pointer might be null if profiling is not enabled.
     [[nodiscard]] auto profile_node() const -> ProfileNodeInternal * { return do_profile_node(); }
     //! Returns true if the callback should be projected. remaining_vars and callbacks should be empty vectors that are filled with the variables to notproject and the callbacks to project, respectively, when this function returns true.
-    [[nodiscard]] auto project(std::vector<VariableSet> &remaining_vars, std::vector<InstanceCallback> &callbacks) -> bool { return do_project(remaining_vars, callbacks); }
+    [[nodiscard]] auto project(const std::vector<Matcher*> &matchers, std::vector<VariableSet> &remaining_vars, std::vector<InstanceCallback> &callbacks) -> bool { return do_project(matchers, remaining_vars, callbacks); }
 
   private:
     virtual void do_init(size_t gen) = 0;
@@ -145,7 +151,7 @@ class InstanceCallback {
     virtual void do_print_head(std::ostream &out) const = 0;
     [[nodiscard]] virtual auto do_is_important([[maybe_unused]] size_t index) const -> bool { return true; }
     [[nodiscard]] virtual auto do_profile_node() const -> ProfileNodeInternal * = 0;
-    [[nodiscard]] virtual auto do_project(std::vector<VariableSet> &remaining_vars, std::vector<InstanceCallback> &callbacks) -> bool { return false; }
+    [[nodiscard]] virtual auto do_project(const std::vector<Matcher*> &matchers, std::vector<VariableSet> &remaining_vars, std::vector<InstanceCallback> &callbacks) -> bool { return false; }
 };
 
 //! An instantiator implementing the basic grounding algorithm.
@@ -216,6 +222,7 @@ class Instantiator {
         [[nodiscard]] auto depend() const -> DependVec const &;
         [[nodiscard]] auto backjumpable() const -> bool;
         void block();
+        auto matcher() const -> Matcher & { return *matcher_; }
 
       private:
         UMatcher matcher_;

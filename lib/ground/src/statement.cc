@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include <clingo/ground/matcher.hh>
 #include <clingo/ground/statement.hh>
 
@@ -9,6 +11,26 @@
 namespace CppClingo::Ground {
 
 namespace {
+
+void set_intersection(VariableSet set1, VariableSet set2, VariableSet &result) {
+    if (set1.size() > set2.size()) {
+        std::swap(set1, set2);
+    }
+    for (auto var : set1) {
+        if(set2.find(var) != set2.end()) {
+            result.insert(var);
+        }
+    }
+}
+
+bool is_subset(const VariableSet &set1, const VariableSet &set2) {
+    for (const auto& elem : set1) {
+        if (set2.find(elem) == set2.end()) {
+            return false; // Found an element in A not in B
+        }
+    }
+    return true;
+}
 
 class AssignmentAnalyzer {
   public:
@@ -341,6 +363,81 @@ void StmRule::do_propagate([[maybe_unused]] SymbolStore &store, [[maybe_unused]]
             queue.propagate(idx);
         }
     }
+}
+
+bool StmRule::do_project([[maybe_unused]] std::vector<Matcher*> const &matchers, [[maybe_unused]] std::vector<VariableSet> &remaining_vars,
+                         [[maybe_unused]] std::vector<InstanceCallback> &callbacks) {
+    for (auto const &matcher : matchers) {
+        matcher->print(std::cerr);
+        auto vars = matcher->vars();
+        if (vars.has_value()) {
+            std::cerr << "\t{ " << Util::p_range(*vars, ", ") << " }\t" << typeid(*matcher).name() << std::endl;
+        } else {
+            std::cerr << "\t<no vars>\t" << typeid(*matcher).name() << std::endl;
+        }
+    }
+    if (matchers.size() < 2){
+        // A fact, note that the first matcher is #solution.
+        return false;
+    }
+    auto matcher_vars = std::vector<VariableSet>{};
+    for(auto const &matcher : matchers) {
+        if (!matcher->vars().has_value()) {
+            std::cerr << "Matcher does not provide variables, cannot project:" << std::endl;
+            std::cerr << "    ";
+            matcher->print(std::cerr);
+            std::cerr << std::endl;
+            return false;
+        }
+        matcher_vars.emplace_back(matcher->vars().value());
+    }
+    auto previous_vars = std::vector<VariableSet>();
+    auto next_vars = std::vector<VariableSet>();
+    auto tmp_vars = VariableSet();
+    for (auto vars = matcher_vars.rbegin(); vars != matcher_vars.rend(); ++vars) {
+        tmp_vars.insert(vars->begin(), vars->end());
+        previous_vars.push_back(tmp_vars);
+    }
+    tmp_vars = VariableSet();
+    for (auto &vars : matcher_vars) {
+        next_vars.push_back(tmp_vars);
+        tmp_vars.insert(vars.begin(), vars.end());
+    }
+    reverse(next_vars.begin(), next_vars.end());
+    for (size_t i = 0; i < previous_vars.size(); ++i) {
+        std::cerr << "previous variables ( ";
+        matchers[matchers.size() - 1 - i]->print(std::cerr);
+        std::cerr << " ): " << Util::p_range(previous_vars[i], ", ", [](std::ostream &out, auto const &var) { out << var; }) << std::endl;
+    }
+    for (size_t i = 0; i < next_vars.size(); ++i) {
+        std::cerr << "next variables ( ";
+        matchers[matchers.size() - 1 - i]->print(std::cerr);
+        std::cerr << " ): " << Util::p_range(next_vars[i], ", ", [](std::ostream &out, auto const &var) { out << var; }) << std::endl;
+    }
+    std::vector<std::optional<VariableSet>> remaining_vars2 = std::vector<std::optional<VariableSet>>();
+    remaining_vars2.reserve(matcher_vars.size());
+    remaining_vars2.push_back(std::nullopt);
+    remaining_vars2.push_back(std::nullopt);
+    for (size_t i = 2; i < previous_vars.size()-1; ++i) {
+        if (i+1 < previous_vars.size() && previous_vars[i].size() == previous_vars[i+1].size()) {
+            remaining_vars2.push_back(std::nullopt);
+            continue;
+        }
+        auto projected = VariableSet();
+        set_intersection(previous_vars[i], next_vars[i], projected);
+        remaining_vars2.push_back(std::move(projected));
+    }
+    remaining_vars2.push_back(std::nullopt);
+    for (size_t i = 0; i < next_vars.size(); ++i) {
+        std::cerr << "remaining variables ( ";
+        matchers[matchers.size() - 1 - i]->print(std::cerr);
+        if (remaining_vars2[i].has_value()) {
+            std::cerr << " ): " << Util::p_range(remaining_vars2[i].value(), ", ", [](std::ostream &out, auto const &var) { out << var; }) << std::endl;
+        } else {
+            std::cerr << " ): none" << std::endl;
+        }
+    }
+    return false;
 }
 
 // definition of StmExternal

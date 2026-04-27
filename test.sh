@@ -1,2 +1,1 @@
 ctest --test-dir build -C Release --output-on-failure
-./te    

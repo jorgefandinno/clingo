@@ -89,6 +89,7 @@ class StmRule : public Stm {
         init_();
     }
 
+
   private:
     StmRule(UTerm head, AtomBase *base, std::vector<size_t> indices, ULitVec body, RuleType type, ProfileNodeInternal *node)
         : head_{std::move(head)}, node_{node}, base_{base}, indices_{std::move(indices)}, body_{std::move(body)}, type_{type} {
@@ -108,7 +109,8 @@ class StmRule : public Stm {
     void do_propagate(SymbolStore &store, OutputStm &out, Queue &queue) override;
     [[nodiscard]] auto do_priority() const -> size_t override { return std::numeric_limits<size_t>::max(); }
     [[nodiscard]] auto do_profile_node() const -> ProfileNodeInternal * override { return node_; }
-
+    [[nodiscard]] auto do_project([[maybe_unused]] std::vector<Matcher*> const &matchers, [[maybe_unused]] std::vector<VariableSet> &remaining_vars,
+                         [[maybe_unused]] std::vector<InstanceCallback> &callbacks) -> bool override;
     //! The head of the rule.
     //!
     //! Note that this unique pointer is zero in case of constraints.

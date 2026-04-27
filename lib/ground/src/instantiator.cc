@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include <clingo/ground/instantiator.hh>
 
 #include <clingo/util/checked_math.hh>
@@ -97,6 +99,8 @@ void Instantiator::finalize(DependVec depend) {
         void do_match([[maybe_unused]] EvalContext const &ctx) override {}
         auto do_next([[maybe_unused]] EvalContext const &ctx) -> bool override { return false; }
         void do_print(std::ostream &out) const override { out << "#solution"; }
+        auto do_vars() const -> std::optional<VariableSet> override { return VariableSet{}; }
+
     };
     matchers_.emplace_back(std::make_unique<SolutionMatcher>(), std::move(depend));
 }
@@ -208,6 +212,16 @@ auto Instantiator::instantiate_with_projection(Logger &log, SymbolStore &store, 
 
 
 auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, Util::StopFlag *stop) -> GroundResult {
+    std::vector<VariableSet> remaining_vars;
+    std::vector<InstanceCallback> callbacks;
+    std::vector<Matcher*> matchers;
+    for (auto &matcher : matchers_) {
+        matchers.push_back(&matcher.matcher());
+    }
+    std::cerr << "=======================================================" << std::endl;
+    if (icb_->project(matchers, remaining_vars, callbacks)) {
+        return instantiate_with_projection(log, store, out, stop);
+    }
     return instantiate_without_projection(log, store, out, stop);
 }
 

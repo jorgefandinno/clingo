@@ -412,6 +412,7 @@ template <IsBase Base, IsMatch Match> class LookupMatcher : public OnceMatcher {
     }
     void do_print(std::ostream &out) const override { out << *match_; }
     [[nodiscard]] auto do_type() const -> MatcherType override { return type_; }
+    auto do_vars() const -> std::optional<VariableSet> override { return match_->vars(); }
 
     Base *base_;
     Match const *match_;
@@ -434,6 +435,7 @@ template <IsBase Base, IsMatch Match> class FullMatcher : public Matcher {
     }
     void do_print(std::ostream &out) const override { out << *match_; }
     [[nodiscard]] auto do_type() const -> MatcherType override { return type_; }
+    auto do_vars() const -> std::optional<VariableSet> override { return match_->vars(); }
 
     Index *index_;
     size_t *offset_;
@@ -463,6 +465,7 @@ template <IsBase Base, IsMatch Match> class SingleMatcher : public Matcher {
     }
     void do_print(std::ostream &out) const override { out << *match_; }
     [[nodiscard]] auto do_type() const -> MatcherType override { return type_; }
+    auto do_vars() const -> std::optional<VariableSet> override { return match_->vars(); }
 
     Index *index_;
     Match const *match_;
@@ -493,6 +496,7 @@ template <IsBase Base, IsMatch Match> class HashMatcher : public Matcher {
     }
     void do_print(std::ostream &out) const override { out << *match_; }
     [[nodiscard]] auto do_type() const -> MatcherType override { return type_; }
+    auto do_vars() const -> std::optional<VariableSet> override { return match_->vars(); }
 
     Index *index_;
     Match const *match_;
@@ -552,6 +556,7 @@ template <IsBase Base, IsMatch Match> class NonFactMatcher : public OnceMatcher 
         return false;
     }
     void do_print(std::ostream &out) const override { out << "#not_fact " << *match_; }
+    auto do_vars() const -> std::optional<VariableSet> override { return match_->vars(); }
 
     Base *base_;
     Match const *match_;
@@ -573,6 +578,7 @@ template <IsMatch Match> class EvalMatcher : public OnceMatcher {
         }
         return false;
     }
+    auto do_vars() const -> std::optional<VariableSet> override { return match_->vars(); }
 
     Match const *match_;
     typename Match::Key *target_;
