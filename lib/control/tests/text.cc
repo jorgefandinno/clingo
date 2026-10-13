@@ -869,4 +869,109 @@ TEST_CASE("grounder_text") {
     REQUIRE(std::get<1>(res) == 0); // no symbols
 }
 
+TEST_CASE("grounder_text_decompose") {
+    auto store = make_symbol_store(true, false);
+    auto ground = [&store](std::string_view prg) {
+        auto opts = Input::RewriteOptions{};
+        auto gopts = Control::GroundOptions{};
+        gopts.decompose = true;
+        auto log = Logger{};
+        log.set_level(LogLevel::error);
+        auto buf = Util::OutputBuffer{};
+        auto out = Output::make_text_output(buf);
+        auto grd = Control::Grounder{log, *store, opts, gopts, *out};
+        auto params = Input::ProgramParamVec{{store->string("base"), {}}};
+        grd.parse(prg);
+        REQUIRE(grd.ground(params) == GroundResult::ok);
+        return std::string{buf.view()};
+    };
+    SECTION("constraint") {
+        REQUIRE(ground("#show. { p(a1;a2) }. { q(a1,b1); q(a2,b1) }. { r(b1,c1) }. { s(c1) }. "
+                       ":- p(A), q(A,B), r(B,C), s(C).") == "{ p(a1) }.\n"
+                                                              "{ p(a2) }.\n"
+                                                              "{ q(a1,b1) }.\n"
+                                                              "{ q(a2,b1) }.\n"
+                                                              "{ r(b1,c1) }.\n"
+                                                              "{ s(c1) }.\n"
+                                                              "__gringo_projection(7) :- p(a1); q(a1,b1).\n"
+                                                              " :- __gringo_projection(7); r(b1,c1); s(c1).\n"
+                                                              "__gringo_projection(7) :- p(a2); q(a2,b1).\n"
+                                                              "#show.\n");
+    }
+    SECTION("head") {
+        REQUIRE(ground("#show. { p(a1;a2) }. { q(a1,b1); q(a2,b1) }. { r(b1,c1); r(b1,c2) }. { s(c1) }. "
+                       "h(C) :- p(A), q(A,B), r(B,C), s(C).") == "{ p(a1) }.\n"
+                                                                   "{ p(a2) }.\n"
+                                                                   "{ q(a1,b1) }.\n"
+                                                                   "{ q(a2,b1) }.\n"
+                                                                   "{ r(b1,c1) }.\n"
+                                                                   "{ r(b1,c2) }.\n"
+                                                                   "{ s(c1) }.\n"
+                                                                   "__gringo_projection(8) :- p(a1); q(a1,b1).\n"
+                                                                   "h(c1) :- __gringo_projection(8); r(b1,c1); s(c1).\n"
+                                                                   "__gringo_projection(8) :- p(a2); q(a2,b1).\n"
+                                                                   "#show.\n");
+    }
+    SECTION("pure") {
+        // the prefix consists of facts only, so no auxiliary atom is needed
+        REQUIRE(ground("#show. p(a1;a2). q(a1,b1). q(a2,b1). { r(b1,c1) }. { s(c1) }. "
+                       "h(C) :- p(A), q(A,B), r(B,C), s(C).") == "q(a1,b1).\n"
+                                                                   "q(a2,b1).\n"
+                                                                   "p(a1).\n"
+                                                                   "p(a2).\n"
+                                                                   "{ r(b1,c1) }.\n"
+                                                                   "{ s(c1) }.\n"
+                                                                   "h(c1) :- r(b1,c1); s(c1).\n"
+                                                                   "#show.\n");
+    }
+    SECTION("negative") {
+        REQUIRE(ground("#show. { p(a1;a2) }. { t(a1) }. { q(a1,b1); q(a2,b1) }. { r(b1,c1) }. "
+                       "h(C) :- p(A), q(A,B), not t(A), r(B,C).") == "{ p(a1) }.\n"
+                                                                       "{ p(a2) }.\n"
+                                                                       "{ t(a1) }.\n"
+                                                                       "{ q(a1,b1) }.\n"
+                                                                       "{ q(a2,b1) }.\n"
+                                                                       "{ r(b1,c1) }.\n"
+                                                                       "__gringo_projection(7) :- p(a1); q(a1,b1); not t(a1).\n"
+                                                                       "h(c1) :- __gringo_projection(7); r(b1,c1).\n"
+                                                                       "__gringo_projection(7) :- p(a2); q(a2,b1).\n"
+                                                                       "#show.\n");
+    }
+    SECTION("dead") {
+        // the rule defining the auxiliary atom for b1 is never output
+        REQUIRE(ground("#show. { p(a1;a2) }. { q(a1,b1); q(a2,b2) }. { r(b2,c1) }. "
+                       "h(C) :- p(A), q(A,B), r(B,C).") == "{ p(a1) }.\n"
+                                                            "{ p(a2) }.\n"
+                                                            "{ q(a1,b1) }.\n"
+                                                            "{ q(a2,b2) }.\n"
+                                                            "{ r(b2,c1) }.\n"
+                                                            "__gringo_projection(7) :- p(a2); q(a2,b2).\n"
+                                                            "h(c1) :- __gringo_projection(7); r(b2,c1).\n"
+                                                            "#show.\n");
+    }
+    SECTION("recursive") {
+        // p and r receive new atoms in the same generation; the instance with
+        // p(a2) and r(b1,c2) must not be lost
+        REQUIRE(ground("#show. { p(a1) }. { q(a1,b1) }. { y }. q(a2,b1). s(c1). s(c2). r(b1,c1). "
+                       "h(C) :- p(A), q(A,B), r(B,C), s(C). "
+                       "h(c1) :- y. p(a2) :- h(c1). r(b1,c2) :- h(c1).") == "q(a2,b1).\n"
+                                                                             "s(c1).\n"
+                                                                             "s(c2).\n"
+                                                                             "r(b1,c1).\n"
+                                                                             "{ p(a1) }.\n"
+                                                                             "{ q(a1,b1) }.\n"
+                                                                             "{ y }.\n"
+                                                                             "h(c1) :- y.\n"
+                                                                             "p(a2) :- h(c1).\n"
+                                                                             "__gringo_projection(10) :- p(a1); q(a1,b1).\n"
+                                                                             "h(c1) :- __gringo_projection(10).\n"
+                                                                             "r(b1,c2) :- h(c1).\n"
+                                                                             "__gringo_projection(12) :- p(a2).\n"
+                                                                             "h(c1) :- __gringo_projection(12).\n"
+                                                                             "h(c2) :- __gringo_projection(12); r(b1,c2).\n"
+                                                                             "h(c2) :- p(a1); q(a1,b1); r(b1,c2).\n"
+                                                                             "#show.\n");
+    }
+}
+
 } // namespace CppClingo::Test

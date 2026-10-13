@@ -18,6 +18,8 @@ struct GroundOptions {
     EstimateFunction fun = EstimateFunction::average;
     //! Selector to choose what kind of literals to use for recursive domains.
     EstimateSelector sel = EstimateSelector::pred;
+    //! Whether to decompose rule bodies during instantiation.
+    bool decompose = false;
 };
 
 //! A grounder for logic programs.

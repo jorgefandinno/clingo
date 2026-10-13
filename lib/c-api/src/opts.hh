@@ -256,7 +256,9 @@ class ClingoOptions {
                                                                           {"predicate", EstimateSelector::pred},
                                                                           {"all", EstimateSelector::all},
                                                                       })),
-             "Use {predicate|all} literals for recursive domain estimation.")         //
+             "Use {predicate|all} literals for recursive domain estimation.") //
+            ("@1,decompose", flag(solver_opts_.gopts.decompose = false),
+             "Decompose rule bodies using auxiliary atoms during grounding")          //
             ("show", parse(parse_sigs), "Comma-separated list of predicates to show") //
             ("profile", parse(parse_profile).implicit("detailed").arg("off|<detail>[,<type>]"),
              R"(Enable profiling of grounding

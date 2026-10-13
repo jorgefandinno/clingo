@@ -47,7 +47,7 @@ void Instantiator::BackjumpMatcher::match(EvalContext const &ctx) {
 
 auto Instantiator::BackjumpMatcher::next(EvalContext const &ctx) -> bool {
     if (matcher_->next(ctx)) {
-        backjumpable_ = true;
+        backjumpable_ = matcher_->skippable();
         return true;
     }
     return false;
@@ -101,6 +101,10 @@ void Instantiator::finalize(DependVec depend) {
     matchers_.emplace_back(std::make_unique<SolutionMatcher>(), std::move(depend));
 }
 
+void Instantiator::decompose(UInstanceDecomposer dec) {
+    dec_ = std::move(dec);
+}
+
 auto Instantiator::enqueue() -> bool {
     bool old = enqueued_;
     enqueued_ = true;
@@ -123,6 +127,9 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
     auto it = ie - 1;
     auto ib = matchers_.rbegin();
     auto ctx = EvalContext{log, store, out, ass_};
+    if (dec_ != nullptr) {
+        dec_->start();
+    }
     it->match(ctx);
     CLINGO_REPORT(log, trace) << "  instantiate: " << *this;
     do {
@@ -146,7 +153,7 @@ auto Instantiator::instantiate(Logger &log, SymbolStore &store, OutputStm &out, 
             if (stats_ != nullptr) {
                 ++stats_->instances;
             }
-            if (!icb_->report(ctx)) {
+            if (!(dec_ != nullptr ? dec_->report(ctx, *icb_) : icb_->report(ctx))) {
                 return GroundResult::unsatisfiable;
             }
         }

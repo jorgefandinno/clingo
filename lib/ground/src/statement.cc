@@ -4,7 +4,10 @@
 #include <clingo/util/print.hh>
 #include <clingo/util/unordered_map.hh>
 
+#include <array>
+#include <cassert>
 #include <ranges>
+#include <stdexcept>
 
 namespace CppClingo::Ground {
 
@@ -99,6 +102,361 @@ class AssignmentAnalyzer {
     size_t last_ = 0;
 };
 
+
+//! A vector of matchers with their depend sets and literal indices in matching order.
+using OrderedMatcherVec = std::vector<std::tuple<UMatcher, Instantiator::DependVec, size_t>>;
+
+//! Output recording body literals to output them later.
+class LitRecorder : public OutputLit {
+  public:
+    //! A recorded literal.
+    using RecLit = std::tuple<Sign, Symbol, size_t>;
+
+    //! Get the recorded literals.
+    [[nodiscard]] auto lits() -> std::vector<RecLit> & { return lits_; }
+
+  private:
+    void do_lit(Sign sign, Symbol sym, size_t uid) override { lits_.emplace_back(sign, sym, uid); }
+    void do_boolean(bool value) override {
+        if (!value) {
+            throw std::logic_error("unexpected boolean in decomposed rule");
+        }
+    }
+    auto do_delayed([[maybe_unused]] Sign sign, [[maybe_unused]] std::optional<size_t> uid) -> size_t override {
+        throw std::logic_error("unexpected delayed literal in decomposed rule");
+    }
+
+    std::vector<RecLit> lits_;
+};
+
+//! Decomposes rule bodies at cuts.
+//!
+//! For each cut, a table maps the values of the separator variables to an
+//! entry holding an auxiliary atom. The atom is defined by rules whose bodies
+//! consist of the auxiliary atom of the previous cut and the literals between
+//! the two cuts. The defining rules are only output once the auxiliary atom is
+//! used in the body of another rule.
+//!
+//! Auxiliary atoms have the form `__gringo_projection(<uid>)` so that the text
+//! output can be parsed again. Hence, `__gringo_projection/1` is a reserved
+//! predicate name.
+class RuleDecomposer : public InstanceDecomposer {
+  public:
+    //! Information about a cut.
+    struct Cut {
+        //! The separator variables.
+        VariableVec sep;
+        //! The literals between the previous cut and this cut.
+        std::vector<Lit const *> lits;
+        //! Whether all literals before the cut are domain literals.
+        bool pure;
+        //! Whether the table is kept across calls to Instantiator::instantiate.
+        bool persistent;
+    };
+
+    //! Construct the decomposer for the given cuts and the literals after the last cut.
+    RuleDecomposer(std::vector<Cut> cuts, std::vector<Lit const *> lits) : lits_{std::move(lits)} {
+        cuts_.reserve(cuts.size());
+        for (auto &cut : cuts) {
+            cuts_.emplace_back(std::move(cut));
+        }
+    }
+
+    //! Match the cut with the given index.
+    //!
+    //! Returns true if the instantiation has to continue after the cut.
+    auto next(EvalContext const &ctx, size_t idx) -> bool {
+        auto &state = cuts_[idx];
+        if (state.cur.has_value()) {
+            close_(idx);
+            return false;
+        }
+        auto key = SymbolVec{};
+        key.reserve(state.cut.sep.size());
+        for (auto var : state.cut.sep) {
+            assert(ctx.ass()[var].has_value());
+            key.emplace_back(*ctx.ass()[var]);
+        }
+        if (auto it = state.table.find(key); it != state.table.end()) {
+            auto &entry = state.entries[it->second];
+            if (entry.status == Status::active && entry.atom.has_value()) {
+                activate_(ctx, idx);
+                emit_(ctx, define_(ctx, idx, *entry.atom));
+            }
+            return false;
+        }
+        auto entry = Entry{};
+        if (!state.cut.pure) {
+            auto uid = ctx.out().uid();
+            auto sym = ctx.store().fun_ref(ctx.store().string_ref("__gringo_projection"),
+                                           std::array{SymbolStore::num_ref(static_cast<int32_t>(uid))}, false);
+            entry.atom = AuxAtom{sym, uid};
+            entry.rules.emplace_back(define_(ctx, idx, *entry.atom));
+        }
+        state.table.emplace(std::move(key), state.entries.size());
+        state.cur = state.entries.size();
+        state.entries.emplace_back(std::move(entry));
+        return true;
+    }
+
+    //! Print the cut with the given index.
+    void print(std::ostream &out, size_t idx) const {
+        out << "#cut(" << Util::p_range(cuts_[idx].cut.sep, ",", [](std::ostream &out, auto var) {
+            out << "X_" << var;
+        }) << ")";
+    }
+
+  private:
+    //! The status of an entry.
+    enum class Status : uint8_t {
+        pending, //!< The instantiation after the cut has not yet produced an instance.
+        active,  //!< The auxiliary atom has been used.
+        dead     //!< The instantiation after the cut has not produced an instance.
+    };
+    //! A rule defining an auxiliary atom.
+    struct Rule {
+        AuxAtom head;
+        std::vector<LitRecorder::RecLit> body;
+    };
+    //! An entry in the table of a cut.
+    struct Entry {
+        std::optional<AuxAtom> atom;
+        Status status = Status::pending;
+        std::vector<Rule> rules;
+    };
+    //! The state associated with a cut.
+    struct State {
+        State(Cut cut) : cut{std::move(cut)} {}
+
+        Cut cut;
+        Util::unordered_map<SymbolVec, size_t> table;
+        std::vector<Entry> entries;
+        //! The entry opened by the current visit of the cut.
+        std::optional<size_t> cur;
+    };
+
+    void do_start() override {
+        for (auto &state : cuts_) {
+            if (!state.cut.persistent) {
+                state.table.clear();
+                state.entries.clear();
+            }
+            state.cur.reset();
+        }
+    }
+
+    auto do_report(EvalContext const &ctx, InstanceCallback &icb) -> bool override {
+        activate_(ctx, cuts_.size());
+        auto const &last = cuts_.back();
+        assert(last.cur.has_value());
+        return icb.report_partial(ctx, lits_, last.entries[*last.cur].atom);
+    }
+
+    //! Get the rule defining the given atom for the cut with the given index.
+    auto define_(EvalContext const &ctx, size_t idx, AuxAtom const &head) -> Rule {
+        auto rec = LitRecorder{};
+        if (idx > 0) {
+            auto const &prev = cuts_[idx - 1];
+            assert(prev.cur.has_value());
+            if (auto const &atom = prev.entries[*prev.cur].atom; atom.has_value()) {
+                rec.lits().emplace_back(Sign::none, atom->first, atom->second);
+            }
+        }
+        for (auto const *lit : cuts_[idx].cut.lits) {
+            static_cast<void>(lit->output(ctx, rec));
+        }
+        return {head, std::move(rec.lits())};
+    }
+
+    //! Output the given rule.
+    static void emit_(EvalContext const &ctx, Rule const &rule) {
+        auto &out = ctx.out().body();
+        for (auto const &[sign, sym, uid] : rule.body) {
+            out.lit(sign, sym, uid);
+        }
+        ctx.out().rule(std::tuple{rule.head.first, rule.head.second, false});
+    }
+
+    //! Output the pending rules of the entries opened by the cuts before the given index.
+    void activate_(EvalContext const &ctx, size_t idx) {
+        for (size_t i = 0; i < idx; ++i) {
+            auto &state = cuts_[i];
+            assert(state.cur.has_value());
+            auto &entry = state.entries[*state.cur];
+            if (entry.status == Status::pending) {
+                for (auto const &rule : entry.rules) {
+                    emit_(ctx, rule);
+                }
+                entry.rules.clear();
+                entry.status = Status::active;
+            }
+        }
+    }
+
+    //! Close the entry opened by the cut with the given index.
+    void close_(size_t idx) {
+        auto &state = cuts_[idx];
+        auto &entry = state.entries[*state.cur];
+        if (entry.status == Status::pending) {
+            entry.status = Status::dead;
+            entry.rules.clear();
+        }
+        state.cur.reset();
+    }
+
+    std::vector<State> cuts_;
+    std::vector<Lit const *> lits_;
+};
+
+//! A matcher for a cut in a decomposed rule body.
+//!
+//! The matcher matches at most once. It fails if the values of the separator
+//! variables have been seen before. Backjumping never skips it so that the
+//! entry it opened is closed once the instantiation after the cut is complete.
+class CutMatcher : public Matcher {
+  public:
+    //! Construct the matcher for the cut with the given index.
+    CutMatcher(RuleDecomposer &dec, size_t idx) : dec_{&dec}, idx_{idx} {}
+
+  private:
+    void do_init([[maybe_unused]] InstantiationContext const &ctx, [[maybe_unused]] size_t gen) override {}
+    void do_match([[maybe_unused]] EvalContext const &ctx) override {}
+    auto do_next(EvalContext const &ctx) -> bool override { return dec_->next(ctx, idx_); }
+    void do_print(std::ostream &out) const override { dec_->print(out, idx_); }
+    [[nodiscard]] auto do_skippable() const -> bool override { return false; }
+
+    RuleDecomposer *dec_;
+    size_t idx_;
+};
+
+//! Add the matchers to the instantiator decomposing the body at cuts.
+//!
+//! A cut is placed before a literal if the literal binds a fresh variable and
+//! some variable bound before the literal that was not eliminated at the
+//! previous cut does neither occur in the remaining literals nor in the head.
+//! Returns false if no cut was found; in this case, the instantiator is left
+//! unchanged.
+auto add_decomposed(Instantiator &inst, InstanceCallback &cb, OrderedMatcherVec &ordered, VariableSet const &head,
+                    std::vector<size_t> const &provided, ULitVec const &lits) -> bool {
+    auto n = ordered.size();
+    auto lit_at = [&](size_t k) -> Lit const & { return *lits[std::get<2>(ordered[k])]; };
+    // gather variables of literals and of suffixes
+    auto vars = std::vector<VariableSet>(n);
+    for (size_t k = 0; k < n; ++k) {
+        lit_at(k).vars(vars[k], VarSelectMode::all);
+    }
+    auto later = std::vector<VariableSet>(n + 1);
+    for (size_t k = n; k-- > 0;) {
+        later[k] = later[k + 1];
+        later[k].insert(vars[k].begin(), vars[k].end());
+    }
+    // compute cut positions and separators
+    auto pos = std::vector<size_t>{};
+    auto seps = std::vector<VariableVec>{};
+    auto bound = VariableSet{};
+    size_t num_elim = 0;
+    for (size_t k = 0; k < n; ++k) {
+        if (k > 0 && !std::ranges::all_of(vars[k], [&](auto var) { return bound.contains(var); })) {
+            auto sep = VariableVec{};
+            size_t elim = 0;
+            for (auto var : bound) {
+                if (later[k].contains(var) || head.contains(var)) {
+                    sep.emplace_back(var);
+                } else {
+                    ++elim;
+                }
+            }
+            if (elim != num_elim) {
+                std::ranges::sort(sep);
+                pos.emplace_back(k);
+                seps.emplace_back(std::move(sep));
+                num_elim = elim;
+            }
+        }
+        bound.insert(vars[k].begin(), vars[k].end());
+    }
+    if (pos.empty()) {
+        return false;
+    }
+    auto num_cuts = pos.size();
+    // map old matcher indices to new ones taking cut matchers into account
+    auto index = std::vector<size_t>(n);
+    for (size_t k = 0, c = 0; k < n; ++k) {
+        while (c < num_cuts && pos[c] <= k) {
+            ++c;
+        }
+        index[k] = k + c;
+    }
+    auto prov = [&](VariableSet const &select) {
+        auto res = Instantiator::DependVec{};
+        for (auto var : select) {
+            res.emplace_back(index[provided[var]]);
+        }
+        std::ranges::sort(res);
+        res.erase(std::ranges::unique(res).begin(), res.end());
+        return res;
+    };
+    // gather the literals and the important variables of a block of literals
+    auto block_lits = [&](size_t begin, size_t end) {
+        auto idx = std::vector<size_t>{};
+        for (size_t k = begin; k < end; ++k) {
+            idx.emplace_back(std::get<2>(ordered[k]));
+        }
+        std::ranges::sort(idx);
+        auto res = std::vector<Lit const *>{};
+        for (auto i : idx) {
+            res.emplace_back(lits[i].get());
+        }
+        return res;
+    };
+    auto block_important = [&](size_t begin, size_t end, VariableSet &res) {
+        for (size_t k = begin; k < end; ++k) {
+            if (cb.is_important(std::get<2>(ordered[k])) && !lit_at(k).domain()) {
+                res.insert(vars[k].begin(), vars[k].end());
+            }
+        }
+    };
+    // create the decomposer
+    auto cuts = std::vector<RuleDecomposer::Cut>{};
+    auto cut_depends = std::vector<Instantiator::DependVec>{};
+    for (size_t c = 0; c < num_cuts; ++c) {
+        auto begin = c > 0 ? pos[c - 1] : 0;
+        auto dep = VariableSet{seps[c].begin(), seps[c].end()};
+        block_important(begin, pos[c], dep);
+        if (c > 0) {
+            dep.insert(seps[c - 1].begin(), seps[c - 1].end());
+        }
+        cut_depends.emplace_back(prov(dep));
+        auto pure = true;
+        for (size_t k = 0; k < pos[c]; ++k) {
+            pure = pure && lit_at(k).domain();
+        }
+        auto persistent = true;
+        for (size_t k = pos[c]; k < n; ++k) {
+            persistent = persistent && lit_at(k).single_pass();
+        }
+        cuts.emplace_back(seps[c], block_lits(begin, pos[c]), pure, persistent);
+    }
+    auto dec = std::make_unique<RuleDecomposer>(std::move(cuts), block_lits(pos.back(), n));
+    // add the matchers
+    for (size_t k = 0, c = 0; k < n; ++k) {
+        for (; c < num_cuts && pos[c] == k; ++c) {
+            inst.add(std::make_unique<CutMatcher>(*dec, c), cut_depends[c]);
+        }
+        auto &[matcher, depend, lit_idx] = ordered[k];
+        for (auto &d : depend) {
+            d = index[d];
+        }
+        inst.add(std::move(matcher), std::move(depend));
+    }
+    auto solution = VariableSet{head.begin(), head.end()};
+    block_important(pos.back(), n, solution);
+    solution.insert(seps.back().begin(), seps.back().end());
+    inst.finalize(prov(solution));
+    inst.decompose(std::move(dec));
+    return true;
+}
+
 } // namespace
 
 void Linearizer::start(Queue &queue) {
@@ -106,6 +464,9 @@ void Linearizer::start(Queue &queue) {
 }
 
 void Linearizer::prepare(InstanceCallback &cb, ULitVec const &body, VariableSet important) {
+    auto head = important;
+    auto decompose = decompose_ && cb.decomposable() &&
+                     std::ranges::all_of(body, [](auto const &lit) { return lit->decomposable(); });
     rec_.clear();
     todos_.clear();
     todos_.emplace_back();
@@ -132,7 +493,7 @@ void Linearizer::prepare(InstanceCallback &cb, ULitVec const &body, VariableSet 
     }
     build_(body);
     for (auto const &todo : todos_) {
-        auto [inst, index] = order_(cb, todo, important, body);
+        auto [inst, index] = order_(cb, todo, important, head, decompose, body);
         iqueue_->insert(std::move(inst), index);
     }
 }
@@ -167,7 +528,8 @@ void Linearizer::build_(ULitVec const &lits) {
 }
 
 auto Linearizer::order_(InstanceCallback &cb, std::vector<MatcherType> const &todo, VariableSet const &important,
-                        ULitVec const &lits) -> std::pair<Instantiator, std::optional<size_t>> {
+                        VariableSet const &head, bool decompose, ULitVec const &lits)
+    -> std::pair<Instantiator, std::optional<size_t>> {
     auto inst = Instantiator{cb, var_map_.size(), lits.size()};
     size_t gen = 0;
     queue_.clear();
@@ -197,6 +559,8 @@ auto Linearizer::order_(InstanceCallback &cb, std::vector<MatcherType> const &to
         return res;
     };
     // process the queue
+    auto ordered = OrderedMatcherVec{};
+    ordered.reserve(lits.size());
     auto done = Util::unordered_set<Lit const *>{};
     done.reserve(lits.size());
     auto res_index = std::optional<size_t>{};
@@ -272,6 +636,8 @@ auto Linearizer::order_(InstanceCallback &cb, std::vector<MatcherType> const &to
         queue_.pop_back();
         // skip if an equivalent matcher has already been added (i.e., X=Y and Y=X)
         if (!done.emplace(lits[i].get()).second && todo[i] == MatcherType::all_atoms) {
+            // the decomposition requires a matcher for each literal
+            decompose = false;
             continue;
         }
         auto [matcher, index] = lits[i]->matcher(*mbr_, todo[i], bound);
@@ -279,7 +645,7 @@ auto Linearizer::order_(InstanceCallback &cb, std::vector<MatcherType> const &to
             res_index = index;
         }
         auto const &[cur, dep, prv] = lit_map_[i];
-        inst.add(std::move(matcher), make_depend(dep, prv));
+        ordered.emplace_back(std::move(matcher), make_depend(dep, prv), i);
         for (auto var : prv) {
             if (bound[var]) {
                 continue;
@@ -295,7 +661,12 @@ auto Linearizer::order_(InstanceCallback &cb, std::vector<MatcherType> const &to
         }
         ++k;
     }
-    inst.finalize(make_depend(important, std::vector<size_t>{}));
+    if (!decompose || !add_decomposed(inst, cb, ordered, head, provided, lits)) {
+        for (auto &[matcher, depend, lit_idx] : ordered) {
+            inst.add(std::move(matcher), std::move(depend));
+        }
+        inst.finalize(make_depend(important, std::vector<size_t>{}));
+    }
     return {std::move(inst), res_index};
 }
 
@@ -350,6 +721,26 @@ auto StmRule::do_report(EvalContext const &ctx) -> bool {
             fact = false;
         }
     }
+    return report_head_(ctx, fact);
+}
+
+auto StmRule::do_report_partial(EvalContext const &ctx, std::span<Lit const *const> lits, std::optional<AuxAtom> aux)
+    -> bool {
+    bool fact = type_ == RuleType::normal;
+    auto &out = ctx.out().body();
+    if (aux.has_value()) {
+        out.lit(Sign::none, aux->first, aux->second);
+        fact = false;
+    }
+    for (auto const *lit : lits) {
+        if (lit->output(ctx, out)) {
+            fact = false;
+        }
+    }
+    return report_head_(ctx, fact);
+}
+
+auto StmRule::report_head_(EvalContext const &ctx, bool fact) -> bool {
     if (head_ != nullptr) {
         auto it = base_
                       ->add(atom_, fact ? StateAtom::fact : StateAtom::derived,

@@ -48,8 +48,12 @@ using UStmVec = std::vector<UStm>;
 class Linearizer {
   public:
     //! Construct the linearizer.
-    Linearizer(std::pmr::monotonic_buffer_resource &mbr, EstimateFunction fun, EstimateSelector sel)
-        : mbr_{&mbr}, fun_{fun}, sel_{sel} {}
+    //!
+    //! If decompose is true, the bodies of decomposable statements are split
+    //! at cuts during instantiation (see InstanceDecomposer).
+    Linearizer(std::pmr::monotonic_buffer_resource &mbr, EstimateFunction fun, EstimateSelector sel,
+               bool decompose = false)
+        : mbr_{&mbr}, fun_{fun}, sel_{sel}, decompose_{decompose} {}
     //! Indicate that a new domain is being prepared.
     void start(Queue &queue);
     //! Prepare a statement for grounding.
@@ -59,8 +63,11 @@ class Linearizer {
     //! Build the dependency graph among literals and variables.
     void build_(ULitVec const &lits);
     //! Create matchers for literals ordering them heuristically.
+    //!
+    //! The head variables are only used if the body is decomposed.
     auto order_(InstanceCallback &cb, std::vector<MatcherType> const &todo, VariableSet const &important,
-                ULitVec const &lits) -> std::pair<Instantiator, std::optional<size_t>>;
+                VariableSet const &head, bool decompose, ULitVec const &lits)
+        -> std::pair<Instantiator, std::optional<size_t>>;
 
     Queue *iqueue_ = nullptr;
     std::pmr::monotonic_buffer_resource *mbr_;
@@ -73,6 +80,7 @@ class Linearizer {
     std::vector<std::vector<size_t>> var_map_;
     EstimateFunction fun_;
     EstimateSelector sel_;
+    bool decompose_;
 };
 
 //! Enumeration of available rule types.
@@ -104,9 +112,15 @@ class StmRule : public Stm {
     void do_print_head(std::ostream &out) const override;
     void do_init(size_t gen) override;
     [[nodiscard]] auto do_report(EvalContext const &ctx) -> bool override;
+    [[nodiscard]] auto do_report_partial(EvalContext const &ctx, std::span<Lit const *const> lits,
+                                         std::optional<AuxAtom> aux) -> bool override;
+    [[nodiscard]] auto do_decomposable() const -> bool override { return true; }
     void do_propagate(SymbolStore &store, OutputStm &out, Queue &queue) override;
     [[nodiscard]] auto do_priority() const -> size_t override { return std::numeric_limits<size_t>::max(); }
     [[nodiscard]] auto do_profile_node() const -> ProfileNodeInternal * override { return node_; }
+
+    //! Output the head of the rule after its body has been output.
+    auto report_head_(EvalContext const &ctx, bool fact) -> bool;
 
     //! The head of the rule.
     //!

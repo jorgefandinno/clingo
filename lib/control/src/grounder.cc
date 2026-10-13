@@ -71,7 +71,7 @@ class Builder : public Input::DependencyBuilder {
 
     //! Translate components.
     auto do_components(Input::Components const &comps) -> GroundResult override {
-        auto lin = Ground::Linearizer{*mbr_, opts_->fun, opts_->sel};
+        auto lin = Ground::Linearizer{*mbr_, opts_->fun, opts_->sel, opts_->decompose};
         for (auto const &ref_comps : comps) {
             CLINGO_REPORT(*log_, debug) << "  component";
             for (auto const &ref_comp : ref_comps) {

@@ -9,6 +9,9 @@
 #include <clingo/util/sync.hh>
 
 #include <memory>
+#include <optional>
+#include <span>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -94,6 +97,10 @@ class Matcher {
     void print(std::ostream &out) const { do_print(out); }
     //! Get the type of the matcher.
     [[nodiscard]] auto type() const -> MatcherType { return do_type(); }
+    //! Check whether backjumping may skip the matcher.
+    //!
+    //! Matchers that are not skippable stop every backjump that reaches them.
+    [[nodiscard]] auto skippable() const -> bool { return do_skippable(); }
 
   private:
     virtual void do_init(InstantiationContext const &ctx, size_t gen) = 0;
@@ -101,6 +108,7 @@ class Matcher {
     [[nodiscard]] virtual auto do_next(EvalContext const &ctx) -> bool = 0;
     virtual void do_print(std::ostream &out) const = 0;
     [[nodiscard]] virtual auto do_type() const -> MatcherType { return MatcherType::all_atoms; }
+    [[nodiscard]] virtual auto do_skippable() const -> bool { return true; }
 };
 //! A unique pointer to a matcher.
 using UMatcher = std::unique_ptr<Matcher>;
@@ -108,6 +116,10 @@ using UMatcher = std::unique_ptr<Matcher>;
 using UMatcherVec = std::vector<UMatcher>;
 
 class Queue;
+class Lit;
+
+//! An auxiliary atom given by its symbol and its uid.
+using AuxAtom = std::pair<Symbol, size_t>;
 
 //! Callbacks to notify statements during instantiations.
 class InstanceCallback {
@@ -118,6 +130,15 @@ class InstanceCallback {
     void init(size_t gen) { do_init(gen); }
     //! Report an assignment giving rise to an instance for a statement.
     [[nodiscard]] auto report(EvalContext const &ctx) -> bool { return do_report(ctx); }
+    //! Report an instance whose body consists of the given literals and an optional auxiliary atom.
+    //!
+    //! This is only called for statements that are decomposable.
+    [[nodiscard]] auto report_partial(EvalContext const &ctx, std::span<Lit const *const> lits,
+                                      std::optional<AuxAtom> aux) -> bool {
+        return do_report_partial(ctx, lits, aux);
+    }
+    //! Check whether instances of the statement can be decomposed.
+    [[nodiscard]] auto decomposable() const -> bool { return do_decomposable(); }
     //! Notify a statement that instantiation has finished.
     void propagate(SymbolStore &store, OutputStm &out, Queue &queue) { do_propagate(store, out, queue); }
     //! The priority of the callback.
@@ -134,12 +155,40 @@ class InstanceCallback {
   private:
     virtual void do_init(size_t gen) = 0;
     [[nodiscard]] virtual auto do_report(EvalContext const &ctx) -> bool = 0;
+    [[nodiscard]] virtual auto do_report_partial([[maybe_unused]] EvalContext const &ctx,
+                                                 [[maybe_unused]] std::span<Lit const *const> lits,
+                                                 [[maybe_unused]] std::optional<AuxAtom> aux) -> bool {
+        throw std::logic_error("statement is not decomposable");
+    }
+    [[nodiscard]] virtual auto do_decomposable() const -> bool { return false; }
     virtual void do_propagate(SymbolStore &store, OutputStm &out, Queue &queue) = 0;
     [[nodiscard]] virtual auto do_priority() const -> size_t = 0;
     virtual void do_print_head(std::ostream &out) const = 0;
     [[nodiscard]] virtual auto do_is_important([[maybe_unused]] size_t index) const -> bool { return true; }
     [[nodiscard]] virtual auto do_profile_node() const -> ProfileNodeInternal * = 0;
 };
+
+//! Interface to decompose the instances found by an instantiator.
+//!
+//! A decomposer splits the body of an instance at cuts. The part before a cut
+//! is replaced by an auxiliary atom so that the part after the cut has to be
+//! instantiated only once per binding of the variables shared by both parts.
+class InstanceDecomposer {
+  public:
+    //! Destroy the decomposer.
+    virtual ~InstanceDecomposer() = default;
+    //! Notify the decomposer that a call to Instantiator::instantiate starts.
+    void start() { do_start(); }
+    //! Report an instance after all matchers matched.
+    [[nodiscard]] auto report(EvalContext const &ctx, InstanceCallback &icb) -> bool { return do_report(ctx, icb); }
+
+  private:
+    virtual void do_start() = 0;
+    [[nodiscard]] virtual auto do_report(EvalContext const &ctx, InstanceCallback &icb) -> bool = 0;
+};
+
+//! A unique pointer to an instance decomposer.
+using UInstanceDecomposer = std::unique_ptr<InstanceDecomposer>;
 
 //! An instantiator implementing the basic grounding algorithm.
 class Instantiator {
@@ -165,6 +214,8 @@ class Instantiator {
     //! The depend vector must point to matchers that bind relevant variables.
     //! Relevant variables are variables in rule heads but also variables bound by non-domain predicates.
     void finalize(DependVec depends);
+    //! Set a decomposer for the instances found by the instantiator.
+    void decompose(UInstanceDecomposer dec);
     //! Mark enqueued for instantiation.
     //!
     //! This returns true if the instantiator was previously not enqueued.
@@ -196,7 +247,7 @@ class Instantiator {
     class BackjumpMatcher {
       public:
         BackjumpMatcher(UMatcher matcher, DependVec depend)
-            : matcher_{std::move(matcher)}, depend_{std::move(depend)} {}
+            : matcher_{std::move(matcher)}, depend_{std::move(depend)}, backjumpable_{matcher_->skippable()} {}
         void init(InstantiationContext const &ctx, size_t gen);
         void match(EvalContext const &ctx);
         auto next(EvalContext const &ctx) -> bool;
@@ -209,12 +260,13 @@ class Instantiator {
       private:
         UMatcher matcher_;
         std::vector<size_t> depend_;
-        bool backjumpable_ = true;
+        bool backjumpable_;
     };
     InstanceCallback *icb_;
     ProfileStats *stats_;
     Assignment ass_;
     std::vector<BackjumpMatcher> matchers_;
+    UInstanceDecomposer dec_;
     bool enqueued_ = false;
 };
 
