@@ -135,7 +135,8 @@ class LitRecorder : public OutputLit {
 //! entry holding an auxiliary atom. The atom is defined by rules whose bodies
 //! consist of the auxiliary atom of the previous cut and the literals between
 //! the two cuts. The defining rules are only output once the auxiliary atom is
-//! used in the body of another rule.
+//! used in the body of another rule. If the body of the first defining rule of
+//! an entry consists of facts only, the entry gets no auxiliary atom.
 //!
 //! Auxiliary atoms have the form `__gringo_projection(<uid>)` so that the text
 //! output can be parsed again. Hence, `__gringo_projection/1` is a reserved
@@ -187,11 +188,17 @@ class RuleDecomposer : public InstanceDecomposer {
         }
         auto entry = Entry{};
         if (!state.cut.pure) {
-            auto uid = ctx.out().uid();
-            auto sym = ctx.store().fun_ref(ctx.store().string_ref("__gringo_projection"),
-                                           std::array{SymbolStore::num_ref(static_cast<int32_t>(uid))}, false);
-            entry.atom = AuxAtom{sym, uid};
-            entry.rules.emplace_back(define_(ctx, idx, *entry.atom));
+            // If the literals before the cut are facts for this instance, no
+            // auxiliary atom is needed (like for pure cuts). Otherwise, it would
+            // only be defined by a fact, and the head of the rule could not
+            // become a fact.
+            if (auto body = define_body_(ctx, idx); !body.empty()) {
+                auto uid = ctx.out().uid();
+                auto sym = ctx.store().fun_ref(ctx.store().string_ref("__gringo_projection"),
+                                               std::array{SymbolStore::num_ref(static_cast<int32_t>(uid))}, false);
+                entry.atom = AuxAtom{sym, uid};
+                entry.rules.emplace_back(Rule{*entry.atom, std::move(body)});
+            }
         }
         state.table.emplace(std::move(key), state.entries.size());
         state.cur = state.entries.size();
@@ -254,6 +261,13 @@ class RuleDecomposer : public InstanceDecomposer {
 
     //! Get the rule defining the given atom for the cut with the given index.
     auto define_(EvalContext const &ctx, size_t idx, AuxAtom const &head) -> Rule {
+        return {head, define_body_(ctx, idx)};
+    }
+
+    //! Get the body of the rule defining the auxiliary atom for the cut with the given index.
+    //!
+    //! Literals that are facts are omitted.
+    auto define_body_(EvalContext const &ctx, size_t idx) -> std::vector<LitRecorder::RecLit> {
         auto rec = LitRecorder{};
         if (idx > 0) {
             auto const &prev = cuts_[idx - 1];
@@ -265,7 +279,7 @@ class RuleDecomposer : public InstanceDecomposer {
         for (auto const *lit : cuts_[idx].cut.lits) {
             static_cast<void>(lit->output(ctx, rec));
         }
-        return {head, std::move(rec.lits())};
+        return std::move(rec.lits());
     }
 
     //! Output the given rule.

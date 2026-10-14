@@ -972,6 +972,24 @@ TEST_CASE("grounder_text_decompose") {
                                                                              "h(c2) :- p(a1); q(a1,b1); r(b1,c2).\n"
                                                                              "#show.\n");
     }
+    SECTION("fact prefix") {
+        // p is not a domain predicate, but p(a2) is a fact; the prefix p(a2), q(a2,b2)
+        // gets no auxiliary atom, so h(c2) and k become facts
+        REQUIRE(ground("#show. { p(a1) }. p(a2). q(a1,b1). q(a2,b2). r(b1,c1). r(b2,c2). s(c1). s(c2). "
+                       "h(C) :- p(A), q(A,B), r(B,C), s(C). k :- h(c2).") == "p(a2).\n"
+                                                                                 "q(a1,b1).\n"
+                                                                                 "q(a2,b2).\n"
+                                                                                 "r(b1,c1).\n"
+                                                                                 "r(b2,c2).\n"
+                                                                                 "s(c1).\n"
+                                                                                 "s(c2).\n"
+                                                                                 "{ p(a1) }.\n"
+                                                                                 "h(c2).\n"
+                                                                                 "__gringo_projection(10) :- p(a1).\n"
+                                                                                 "h(c1) :- __gringo_projection(10).\n"
+                                                                                 "k.\n"
+                                                                                 "#show.\n");
+    }
     SECTION("comparison") {
         // the comparison is part of the prefix but not of the defining rule
         REQUIRE(ground("#show. { p(a1;a2;a3) }. { q(a1,1); q(a2,1); q(a3,0) }. { r(0,c1); r(1,c1) }. { s(c1) }. "
