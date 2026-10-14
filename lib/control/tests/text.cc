@@ -1025,17 +1025,32 @@ TEST_CASE("grounder_text_decompose") {
                                                              "#show.\n");
     }
     SECTION("assignment") {
-        // the cut is placed before the assignment binding D
+        // no cut is placed before the assignment binding D: it has at most one
+        // match, so the auxiliary atom would occur in a single rule only
         REQUIRE(ground("#show. { p(a1;a2) }. { q(a1,2); q(a2,2) }. { r(4) }. "
                        "h(D) :- p(A), q(A,B), D = B*B, r(D).") == "{ p(a1) }.\n"
                                                                   "{ p(a2) }.\n"
                                                                   "{ q(a1,2) }.\n"
                                                                   "{ q(a2,2) }.\n"
                                                                   "{ r(4) }.\n"
-                                                                  "__gringo_projection(6) :- p(a1); q(a1,2).\n"
-                                                                  "h(4) :- __gringo_projection(6); r(4).\n"
-                                                                  "__gringo_projection(6) :- p(a2); q(a2,2).\n"
+                                                                  "h(4) :- p(a1); q(a1,2); r(4).\n"
+                                                                  "h(4) :- p(a2); q(a2,2); r(4).\n"
                                                                   "#show.\n");
+    }
+    SECTION("assignment in prefix") {
+        // the cut is placed after the assignment, before r(D,E) binding E
+        REQUIRE(ground("#show. { p(a1;a2) }. { q(a1,2); q(a2,2) }. { r(4,c1); r(4,c2) }. "
+                       "h(E) :- p(A), q(A,B), D = B*B, r(D,E).") == "{ p(a1) }.\n"
+                                                                    "{ p(a2) }.\n"
+                                                                    "{ q(a1,2) }.\n"
+                                                                    "{ q(a2,2) }.\n"
+                                                                    "{ r(4,c1) }.\n"
+                                                                    "{ r(4,c2) }.\n"
+                                                                    "__gringo_projection(7) :- p(a1); q(a1,2).\n"
+                                                                    "h(c1) :- __gringo_projection(7); r(4,c1).\n"
+                                                                    "h(c2) :- __gringo_projection(7); r(4,c2).\n"
+                                                                    "__gringo_projection(7) :- p(a2); q(a2,2).\n"
+                                                                    "#show.\n");
     }
 }
 

@@ -53,6 +53,12 @@ class Lit {
     //! Currently, this only holds for positive and negative symbolic literals,
     //! comparisons, and literals checking whether a head is already a fact.
     [[nodiscard]] auto decomposable() const -> bool { return do_decomposable(); }
+    //! Returns true if the literal has at most one match once the variables it
+    //! depends on are bound.
+    //!
+    //! For example, a comparison binds the variable of an assignment to a single
+    //! value.
+    [[nodiscard]] auto functional() const -> bool { return do_functional(); }
     //! Returns true if the base of the literal is complete at the time of grounding.
     [[nodiscard]] auto matcher(std::pmr::monotonic_buffer_resource &mbr, MatcherType type,
                                std::vector<bool> const &bound) -> std::pair<UMatcher, std::optional<size_t>> {
@@ -99,6 +105,7 @@ class Lit {
     [[nodiscard]] virtual auto do_domain() const -> bool = 0;
     [[nodiscard]] virtual auto do_single_pass() const -> bool { return false; }
     [[nodiscard]] virtual auto do_decomposable() const -> bool { return false; }
+    [[nodiscard]] virtual auto do_functional() const -> bool { return false; }
     [[nodiscard]] virtual auto do_matcher(std::pmr::monotonic_buffer_resource &mbr, MatcherType type,
                                           std::vector<bool> const &bound)
         -> std::pair<UMatcher, std::optional<size_t>> = 0;
@@ -123,6 +130,7 @@ class LitComparison : public Lit {
     [[nodiscard]] auto do_domain() const -> bool override;
     [[nodiscard]] auto do_single_pass() const -> bool override;
     [[nodiscard]] auto do_decomposable() const -> bool override { return true; }
+    [[nodiscard]] auto do_functional() const -> bool override { return true; }
     [[nodiscard]] auto do_matcher(std::pmr::monotonic_buffer_resource &mbr, MatcherType type,
                                   std::vector<bool> const &bound)
         -> std::pair<UMatcher, std::optional<size_t>> override;

@@ -348,6 +348,9 @@ class CutMatcher : public Matcher {
 //! A cut is placed before a literal if the literal binds a fresh variable and
 //! some variable bound before the literal that was not eliminated at the
 //! previous cut does neither occur in the remaining literals nor in the head.
+//! Unless all literals before it are domain literals, a functional literal,
+//! like an assignment, does not get a cut: it has at most one match, so the
+//! auxiliary atom would be used in a single rule only.
 //! Returns false if no cut was found; in this case, the instantiator is left
 //! unchanged.
 auto add_decomposed(Instantiator &inst, InstanceCallback &cb, OrderedMatcherVec &ordered, VariableSet const &head,
@@ -369,8 +372,10 @@ auto add_decomposed(Instantiator &inst, InstanceCallback &cb, OrderedMatcherVec 
     auto seps = std::vector<VariableVec>{};
     auto bound = VariableSet{};
     size_t num_elim = 0;
+    auto prefix_domain = true;
     for (size_t k = 0; k < n; ++k) {
-        if (k > 0 && !std::ranges::all_of(vars[k], [&](auto var) { return bound.contains(var); })) {
+        if (k > 0 && (prefix_domain || !lit_at(k).functional()) &&
+            !std::ranges::all_of(vars[k], [&](auto var) { return bound.contains(var); })) {
             auto sep = VariableVec{};
             size_t elim = 0;
             for (auto var : bound) {
@@ -388,6 +393,7 @@ auto add_decomposed(Instantiator &inst, InstanceCallback &cb, OrderedMatcherVec 
             }
         }
         bound.insert(vars[k].begin(), vars[k].end());
+        prefix_domain = prefix_domain && lit_at(k).domain();
     }
     if (pos.empty()) {
         return false;
