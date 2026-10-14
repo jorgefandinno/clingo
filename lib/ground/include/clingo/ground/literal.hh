@@ -50,8 +50,8 @@ class Lit {
     [[nodiscard]] auto single_pass() const -> bool { return do_single_pass(); }
     //! Returns true if the literal can be part of a decomposed rule body.
     //!
-    //! Currently, this only holds for positive and negative symbolic literals
-    //! and for literals checking whether a head is already a fact.
+    //! Currently, this only holds for positive and negative symbolic literals,
+    //! comparisons, and literals checking whether a head is already a fact.
     [[nodiscard]] auto decomposable() const -> bool { return do_decomposable(); }
     //! Returns true if the base of the literal is complete at the time of grounding.
     [[nodiscard]] auto matcher(std::pmr::monotonic_buffer_resource &mbr, MatcherType type,
@@ -122,6 +122,7 @@ class LitComparison : public Lit {
     void do_vars(VariableSet &vars, VarSelectMode mode) const override;
     [[nodiscard]] auto do_domain() const -> bool override;
     [[nodiscard]] auto do_single_pass() const -> bool override;
+    [[nodiscard]] auto do_decomposable() const -> bool override { return true; }
     [[nodiscard]] auto do_matcher(std::pmr::monotonic_buffer_resource &mbr, MatcherType type,
                                   std::vector<bool> const &bound)
         -> std::pair<UMatcher, std::optional<size_t>> override;

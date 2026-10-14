@@ -972,6 +972,53 @@ TEST_CASE("grounder_text_decompose") {
                                                                              "h(c2) :- p(a1); q(a1,b1); r(b1,c2).\n"
                                                                              "#show.\n");
     }
+    SECTION("comparison") {
+        // the comparison is part of the prefix but not of the defining rule
+        REQUIRE(ground("#show. { p(a1;a2;a3) }. { q(a1,1); q(a2,1); q(a3,0) }. { r(0,c1); r(1,c1) }. { s(c1) }. "
+                       ":- p(A), q(A,B), B > 0, r(B,C), s(C).") == "{ p(a1) }.\n"
+                                                                     "{ p(a2) }.\n"
+                                                                     "{ p(a3) }.\n"
+                                                                     "{ q(a1,1) }.\n"
+                                                                     "{ q(a2,1) }.\n"
+                                                                     "{ q(a3,0) }.\n"
+                                                                     "{ r(0,c1) }.\n"
+                                                                     "{ r(1,c1) }.\n"
+                                                                     "{ s(c1) }.\n"
+                                                                     "__gringo_projection(10) :- r(1,c1); s(c1).\n"
+                                                                     " :- __gringo_projection(10); p(a1); q(a1,1).\n"
+                                                                     " :- __gringo_projection(10); p(a2); q(a2,1).\n"
+                                                                     "#show.\n");
+    }
+    SECTION("comparison pure") {
+        // the prefix consists of facts and a comparison, so each rule is output
+        // once instead of once per value of C
+        REQUIRE(ground("#show. c(1,3). c(2,3). c(3,3). { a(1..4) }. "
+                       "h(N,T) :- c(C,N), C != N, a(T).") == "c(1,3).\n"
+                                                             "c(2,3).\n"
+                                                             "c(3,3).\n"
+                                                             "{ a(1) }.\n"
+                                                             "{ a(2) }.\n"
+                                                             "{ a(3) }.\n"
+                                                             "{ a(4) }.\n"
+                                                             "h(3,1) :- a(1).\n"
+                                                             "h(3,2) :- a(2).\n"
+                                                             "h(3,3) :- a(3).\n"
+                                                             "h(3,4) :- a(4).\n"
+                                                             "#show.\n");
+    }
+    SECTION("assignment") {
+        // the cut is placed before the assignment binding D
+        REQUIRE(ground("#show. { p(a1;a2) }. { q(a1,2); q(a2,2) }. { r(4) }. "
+                       "h(D) :- p(A), q(A,B), D = B*B, r(D).") == "{ p(a1) }.\n"
+                                                                  "{ p(a2) }.\n"
+                                                                  "{ q(a1,2) }.\n"
+                                                                  "{ q(a2,2) }.\n"
+                                                                  "{ r(4) }.\n"
+                                                                  "__gringo_projection(6) :- p(a1); q(a1,2).\n"
+                                                                  "h(4) :- __gringo_projection(6); r(4).\n"
+                                                                  "__gringo_projection(6) :- p(a2); q(a2,2).\n"
+                                                                  "#show.\n");
+    }
 }
 
 } // namespace CppClingo::Test
