@@ -1052,6 +1052,33 @@ TEST_CASE("grounder_text_decompose") {
                                                                     "__gringo_projection(7) :- p(a2); q(a2,2).\n"
                                                                     "#show.\n");
     }
+    SECTION("assignment pure") {
+        // the prefix consists of facts and an assignment, so there are pure cuts
+        // before and after the assignment; the second one also identifies B=2 and
+        // B=-2, so the rule is output once instead of four times
+        REQUIRE(ground("#show. p(a1,2). p(a2,2). p(a1,-2). p(a2,-2). q(a1). q(a2). { r(4) }. "
+                       "h(D) :- p(A,B), q(A), D = B*B, r(D).") == "p(a1,2).\n"
+                                                                  "p(a2,2).\n"
+                                                                  "p(a1,-2).\n"
+                                                                  "p(a2,-2).\n"
+                                                                  "q(a1).\n"
+                                                                  "q(a2).\n"
+                                                                  "{ r(4) }.\n"
+                                                                  "h(4) :- r(4).\n"
+                                                                  "#show.\n");
+    }
+    SECTION("pure end") {
+        // a pure cut is placed after the leading facts even though the negative
+        // literal binds no variable, so the rule is output once instead of twice
+        REQUIRE(ground("#show. p(a1,b1). p(a2,b1). q(a1). q(a2). { r(b1) }. "
+                       "h(B) :- p(A,B), q(A), not r(B).") == "p(a1,b1).\n"
+                                                              "p(a2,b1).\n"
+                                                              "q(a1).\n"
+                                                              "q(a2).\n"
+                                                              "{ r(b1) }.\n"
+                                                              "h(b1) :- not r(b1).\n"
+                                                              "#show.\n");
+    }
 }
 
 } // namespace CppClingo::Test
