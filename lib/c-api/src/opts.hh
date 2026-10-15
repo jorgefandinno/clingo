@@ -45,6 +45,21 @@ class ClingoOptions {
             parts_ = parser_.parse_program_parts();
             return static_cast<bool>(parts_);
         };
+        auto parse_projection_mode = [this](std::string_view value) {
+            auto &mode = solver_opts_.ropts.project_mode;
+            auto &decompose = solver_opts_.gopts.decompose;
+            for (auto [name, val, dec] : {std::tuple{"none", Input::ProjectionMode::disabled, false},
+                                          std::tuple{"anonymous", Input::ProjectionMode::anonymous, false},
+                                          std::tuple{"pure", Input::ProjectionMode::pure, false},
+                                          std::tuple{"rules", Input::ProjectionMode::pure, true}}) {
+                if (Potassco::Parse::eqIgnoreCase(value, name)) {
+                    mode = val;
+                    decompose = dec;
+                    return true;
+                }
+            }
+            return false;
+        };
         auto parse_imin = [this](std::string_view value) {
             return Potassco::stringTo(value, solver_opts_.imin) == std::errc{};
         };
@@ -234,14 +249,14 @@ class ClingoOptions {
                                                                  {"unknown", Control::IStop::unknown}})),
 
              "Stop when {none|sat|unsat|unknown} in incmode") //
-            ("@1,projection-mode",
-             storeTo(solver_opts_.ropts.project_mode = Input::ProjectionMode::pure,
-                     values<Input::ProjectionMode>({
-                         {"none", Input::ProjectionMode::disabled},
-                         {"anonymous", Input::ProjectionMode::anonymous},
-                         {"pure", Input::ProjectionMode::pure},
-                     })),
-             "Project {none|anonymous|pure} variables") //
+            ("@1,projection-mode", parse(parse_projection_mode).arg("<mode>"),
+             R"(Project variables [pure]
+      <mode>: {none|anonymous|pure|rules}
+        none     : disable projection
+        anonymous: only project anonymous variables
+        pure     : project pure variables
+        rules    : like pure, and decompose rule bodies with auxiliary atoms
+                   during grounding)") //
             ("@1,project-anonymous", flag(solver_opts_.ropts.project_anonymous = false),
              "Project anonymous variables in negative literals") //
             ("@1,estimate-function",
@@ -257,8 +272,6 @@ class ClingoOptions {
                                                                           {"all", EstimateSelector::all},
                                                                       })),
              "Use {predicate|all} literals for recursive domain estimation.") //
-            ("@1,decompose", flag(solver_opts_.gopts.decompose = false),
-             "Decompose rule bodies using auxiliary atoms during grounding")          //
             ("show", parse(parse_sigs), "Comma-separated list of predicates to show") //
             ("profile", parse(parse_profile).implicit("detailed").arg("off|<detail>[,<type>]"),
              R"(Enable profiling of grounding
